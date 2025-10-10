@@ -1,12 +1,19 @@
-#include "../include/meshratchet.h"
+#include "meshratchet.h"
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
+#include <openssl/opensslv.h>
+#include <openssl/aes.h>
+#include <openssl/chacha.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#error "OpenSSL version 1.1.0 or later is required"
+#endif 
 
 // Внутренние структуры
 struct mr_ctx {
@@ -629,5 +636,3 @@ int mr_get_library_info(char* buffer, size_t buffer_len) {
     strncpy(buffer, info, buffer_len);
     return MR_SUCCESS;
 }
-
-// Остальные функции могут быть реализованы аналогично...
