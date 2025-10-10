@@ -4,11 +4,17 @@
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <openssl/opensslv.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
+#include "../crypto/crypto.h"
+#include "../session/storage.h"
+#include "../utils/metrics.h"
+#include "../utils/replay_protection.h"
+#include "../crypto/auth.h"
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 #error "OpenSSL version 1.1.0 or later is required"
@@ -83,6 +89,17 @@ struct mr_session {
     struct timeval last_decrypt_time;
     double avg_encrypt_time;
     double avg_decrypt_time;
+
+    mr_session_metrics_t metrics;
+    mr_crypto_ctx_t crypto_ctx;
+    uint8_t serialized_data[512];
+    mr_health_status_t health_status;
+
+    mr_replay_cache_t* replay_cache;
+    mr_auth_ctx_t auth_ctx;
+    uint8_t enable_advanced_security;
+    uint32_t security_level;
+    
 };
 
 struct mr_key_pair {
@@ -580,6 +597,17 @@ int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
         sess->quantum_key_index = 0;
     }
 
+    if(mr_crypto_init(&sess->crypto_ctx, ctx->cipher_algorithm) != MR_SUCCESS) {
+        free(sess);
+        return MR_ERROR_CRYPTO;
+    }
+
+    if(mr_metrics_init(sess) != MR_SUCCESS) {
+        mr_crypto_cleanup(&sess->cypto_ctx);
+        free(sess);
+        return MR_ERROR_MEMORY;
+    }
+
     sess->is_valid = 1;
     *session = sess;
     
@@ -603,6 +631,19 @@ int mr_encrypt(mr_session_t* session, mr_msg_type_t msg_type,
                uint8_t* ciphertext, size_t ct_buffer_len, size_t* ct_len) {
     if (!session || !session->is_valid || !plaintext || !ciphertext || !ct_len || pt_len == 0) {
         return MR_ERROR_INVALID_PARAM;
+    }
+
+    if(session->enable_advanced_security) {
+        uint64_t timestamp = mr_generate_message_timestamp();
+        size_t timestamp_offset = offset;
+        memcpy(ciphertext + timestamp_offset, &timestamp, sizeof(timestamp));
+        offset += sizeof(timestamp);
+
+        uint8_t auth_tag[32];
+        if(mr_auth_generate_tag(&session->auth_ctx, plaintext, pt_len, auth_tag, sizeof(auth_tag)) == MR_SUCCESS) {
+            memcpy(ciphertext + offset, auth_tag, 16);
+            offset += 16;
+        }
     }
 
     if (pt_len > session->ctx->max_message_size) {
@@ -799,6 +840,26 @@ int mr_decrypt(mr_session_t* session,
         session->avg_decrypt_time = decrypt_time;
     } else {
         session->avg_decrypt_time = (session->avg_decrypt_time * 0.9) + (decrypt_time * 0.1);
+    }
+
+    if(session->enable_advanced_security) {
+        uint64_t timestamp;
+        memcpy(&timestamp, ciphertext + timestamp_offset, sizeof(timestamp));
+        if(mr_verify_message_timestamp(session, timestamp) != MR_SUCCESS) {
+            log_message(session->ctx, MR_LOG_ERROR, "Message timestamp verification failed!");
+            return MR_ERROR_VERIFICATION;
+        }
+
+        uint8_t received_auth_tag[16];
+        memcpy(received_auth_tag(&session->auth_ctx, plaintext, *pt_len, received_auth_tag, 16) != MR_SUCCESS) {
+            log_message(session->ctx, MR_LOG_ERROR, "message auth failed!");
+            return MR_ERROR_VERIFICATION;
+        }
+
+        if(mr_replay_check_and_add(session, ciphertext, ct_len, session->recv_sequence) != MR_SUCCESS){
+            log_message(session->ctx, MR_LOG_ERROR, "replay attack detected!");
+            return MR_ERROR_SEQUENCE;
+        }
     }
     
     session->last_decrypt_time = end_time;
@@ -999,4 +1060,8 @@ int mr_get_supported_features(char* buffer, size_t buffer_len) {
     
     strncpy(buffer, features, buffer_len);
     return MR_SUCCESS;
+}
+
+int handshake(mr_ctx_t* ctx, const uint8_t* per_pubkey) {
+
 }
