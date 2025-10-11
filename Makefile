@@ -6,7 +6,6 @@ ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 CC = gcc
 CXX = g++
 
-# Используем относительный путь — НИКАКОГО хардкода!
 CFLAGS = -std=c99 -O2 -fPIC -I$(ROOT_DIR)include -Wall -Wextra
 CXXFLAGS = -std=c++17 -O2 -fPIC -I$(ROOT_DIR)include -Wall -Wextra
 
@@ -52,7 +51,7 @@ $(SHARED_LIB_WINDOWS): $(C_OBJECTS)
 	gcc -shared -o $@ $^ $(LIBS)
 	@echo "✅ DLL $(SHARED_LIB_WINDOWS) собрана"
 
-# Сборка C++ обёртки как объектного файла
+# Сборка C++ обёртки как объктного файла
 $(CPP_OBJECT): $(CPP_WRAPPER) $(STATIC_LIB)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
