@@ -2,7 +2,7 @@
 #define MESHRATCHET_CRYPTO_H
 
 #include "../include/meshratchet.h"
-#include <cstdint>
+#include <stdint.h>
 #include <openssl/evp.h>
 
 typedef struct {

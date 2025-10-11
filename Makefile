@@ -1,27 +1,79 @@
 # MeshRatchet Protocol Makefile
 
+# === Автоматическое определение путей ===
+ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
 CC = gcc
-# Временное решение - замените /home/yourusername на ваш реальный путь
-CFLAGS = -std=c99 -O2 -fPIC -I/home/just/mesh_proto/mesh-protocol/include -Wall -Wextra
-LIBS = -lssl -lcrypto
-TARGET = libmeshratchet.a
-SOURCES = src/meshratchet.c
-OBJECTS = $(SOURCES:.c=.o) # Это создаст src/meshratchet.o
+CXX = g++
 
-# Default target
-all: $(TARGET)
+# Используем относительный путь — НИКАКОГО хардкода!
+CFLAGS = -std=c99 -O2 -fPIC -I$(ROOT_DIR)include -Wall -Wextra
+CXXFLAGS = -std=c++17 -O2 -fPIC -I$(ROOT_DIR)include -Wall -Wextra
 
-# Create static library
-$(TARGET): $(OBJECTS)
+LIBS = -lssl -lcrypto -lz
+
+# === C компоненты ===
+SOURCES = src/meshratchet.c \
+          crypto/crypto.c \
+          crypto/auth.c \
+          utils/utils.c \
+          utils/replay_protection.c \
+          utils/metrics.c \
+          session/storage.c
+
+OBJECTS = $(SOURCES:.c=.o)
+
+C_OBJECTS = $(C_SOURCES:.c=.o)
+
+# === C++ компоненты ===
+CPP_WRAPPER = cpp/MeshRatchet.cpp
+CPP_OBJECT = $(CPP_WRAPPER:.cpp=.o)
+
+# === Цели ===
+STATIC_LIB = libmeshratchet.a
+SHARED_LIB_LINUX = libmeshratchet.so
+SHARED_LIB_WINDOWS = meshratchet.dll
+EXAMPLE_CPP = examples/chat_example
+
+all: $(STATIC_LIB) $(SHARED_LIB_LINUX) $(SHARED_LIB_WINDOWS)
+
+# Сборка статической библиотеки
+$(STATIC_LIB): $(C_OBJECTS)
 	ar rcs $@ $^
-	@echo "✅ Библиотека $(TARGET) успешно собрана"
+	@echo "✅ Статическая библиотека $(STATIC_LIB) собрана"
 
-# Правило для компиляции .c файлов в .o
+# Сборка shared library (Linux)
+$(SHARED_LIB_LINUX): $(C_OBJECTS)
+	gcc -shared -o $@ $^ $(LIBS)
+	@echo "✅ Динамическая библиотека $(SHARED_LIB_LINUX) собрана"
+
+# Сборка DLL (Windows через MinGW)
+$(SHARED_LIB_WINDOWS): $(C_OBJECTS)
+	gcc -shared -o $@ $^ $(LIBS)
+	@echo "✅ DLL $(SHARED_LIB_WINDOWS) собрана"
+
+# Сборка C++ обёртки как объектного файла
+$(CPP_OBJECT): $(CPP_WRAPPER) $(STATIC_LIB)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Сборка примера на C++
+$(EXAMPLE_CPP): $(EXAMPLE_CPP).cpp $(CPP_OBJECT) $(STATIC_LIB)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(CPP_OBJECT) $(STATIC_LIB) $(LIBS)
+	@echo "✅ Пример C++ собран: $(EXAMPLE_CPP)"
+
+# Правила компиляции
 %.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@ $(LIBS)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Цель для сборки примера
+example: $(EXAMPLE_CPP)
 
 # Очистка
 clean:
-	rm -f $(TARGET) $(OBJECTS)
+	rm -f $(STATIC_LIB) $(SHARED_LIB_LINUX) $(SHARED_LIB_WINDOWS) $(C_OBJECTS) $(CPP_OBJECT) $(EXAMPLE_CPP)
+	@echo "🧹 Очистка завершена"
 
-.PHONY: all clean
+.PHONY: all clean example

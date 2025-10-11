@@ -1,81 +1,84 @@
 #include "replay_protection.h"
-#include <openssl/sha.h>
-#include <stdint.h>
-#include <time.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/time.h>
 
-int mr_replay_protection_init(mr_session_t *session, size_t cache_size, uint32_t time_window_seconds) {
-    if(!session || cache_size == 0) return MR_ERROR_INVALID_PARAM;
+mr_replay_cache_t* mr_replay_entry_create(size_t cache_size, uint64_t time_window_seconds) {
+    mr_replay_cache_t* cache = calloc(1, sizeof(mr_replay_cache_t));
+    if(!cache) return NULL;
 
-    session->replay_cache = calloc(1, sizeof(mr_replay_cache_t));
-    if(!session->replay_cache) return MR_ERROR_MEMORY;
-
-    session->replay_cache->entries = calloc(cache_size, sizeof(mr_replay_entry_t));
-    if(!session->replay_cache->entries) {
-        free(session->replay_cache);
-        return MR_ERROR_MEMORY;
+    if(mr_replay_cache_init(cache, cache_size, time_window_seconds) != MR_SUCCESS) {
+        free(cache);
+        return NULL;
     }
 
-    session->replay_cache->capacity = cache_size; 
-    session->replay_cache->count = 0;
-    session->replay_cache->window_seconds = time_window_seconds;
-
-    return MR_SUCCES;
+    return cache;
 }
 
-int mr_replay_check_and_add(mr_session_t* session, const uint8_t* message, size_t message_len, uint64_t message_id) {
-    if(!session || !session->replay_cache || !message) {
+int mr_replay_cache_init(mr_replay_cache_t* cache, size_t cache_size, uint64_t time_window_seconds) {
+    if (!cache) return MR_ERROR_INVALID_PARAM;
+    
+    cache->entries = calloc(cache_size, sizeof(mr_replay_entry_t));
+    if (!cache->entries) return MR_ERROR_MEMORY;
+    
+    cache->capacity = cache_size;
+    cache->count = 0;
+    cache->window_seconds = time_window_seconds;
+    
+    return MR_SUCCESS;
+}
+
+int mr_replay_check_and_add(mr_replay_cache_t* cache, const uint8_t* message_hash, size_t hash_len) {
+    if (!cache || !message_hash || hash_len != SHA256_DIGEST_LENGTH) {
         return MR_ERROR_INVALID_PARAM;
     }
-    
-    uint8_t message_hash[SHA256_DIGEST_LENGTH];
-    SHA256(message, message_len, message_hash);
 
-    for(size_t i = 0; i < session->replay_cache->count; i++) {
-        if(memcpy(session->replay_cache->entries[i].message_hash, message_hash, SHA256, SHA256_DIGEST_LENGTH) == 0) {
-            log_message(session->ctx, MR_LOG_WARN, "Replay attack detected! Duplicate message found");
-            return MR_ERROR_SEQUENCE;    
+    // Проверка дубликатов
+    for (size_t i = 0; i < cache->count; i++) {
+        if (memcmp(cache->entries[i].message_hash, message_hash, SHA256_DIGEST_LENGTH) == 0) {
+            return MR_ERROR_SEQUENCE; // replay detected
         }
     }
 
-    size_t index = session->replay_cache->count;
-    if(index => session->replay_cache->capacity) {
-        memmove(session->replay_cache->entries, session->replay_cache->entries + 1, (session->replay_cache->capacity - 1) * sizeof(mr_replay_entry_t));
-        index = session->replay_cache->capacity - 1;
+    // Управление размером кэша
+    size_t index = cache->count;
+    if (index >= cache->capacity) {
+        // Сдвигаем окно: удаляем самый старый элемент
+        memmove(cache->entries, cache->entries + 1, (cache->capacity - 1) * sizeof(mr_replay_entry_t));
+        index = cache->capacity - 1;
     } else {
-        session->replay_cache->count++;
+        cache->count++;
     }
 
-    mr_replay_entry_t* entry = &session->replay_cache->entries[index];
-    entry->message_id = message_id;
-    entry->timestamp = time(NULL);
+    // Добавляем новую запись
+    mr_replay_entry_t* entry = &cache->entries[index];
     memcpy(entry->message_hash, message_hash, SHA256_DIGEST_LENGTH);
+    entry->timestamp = mr_generate_message_timestamp();
 
-    return MR_SUCCES;
+    return MR_SUCCESS;
 }
 
-uint64_t mr_generate_message_timestamp(void) {
+uint64_t mr_generate_message_timestamp() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (uint64_t)tv.tv_sec;
 }
 
-int mr_verify_message_timestamp(mr_session_t* session, uint64_t message_timestamp) {
-    if(!session || !session->replay_cache) {
-        return MR_ERROR_INVALID_PARAM;
+int mr_verify_message_timestamp(uint64_t message_timestamp, uint64_t current_time, uint64_t window_seconds) {
+    if (message_timestamp > current_time + window_seconds) {
+        return MR_ERROR_VERIFICATION; // из будущего
     }
-
-    uint64_t current_time = time(NULL);
-    uint64_t time_diff = current_time - message_timestamp;
-
-    if(time_diff > session->replay_cache->window_seconds) {
-        log_message(session->ctx, MR_LOG_WARN, "Message timestamp to old: %lu secconds", time_diff);
-        return MR_ERROR_SESSION_EXPIRED;
+    if (current_time > message_timestamp + window_seconds) {
+        return MR_ERROR_VERIFICATION; // слишком старое
     }
-
-    if(message_timestamp > current_time + 60) {
-        log_message(session->ctx, MR_LOG_WARN, "Message timestamp from future: %ld seconds", (long)(message_timestamp - current_time));
-        return MR_ERROR_SEQUENCE;
-    }
-
     return MR_SUCCESS;
+}
+
+void mr_replay_cache_cleanup(mr_replay_cache_t* cache) {
+    if (cache && cache->entries) {
+        free(cache->entries);
+        cache->entries = NULL;
+        cache->count = 0;
+        cache->capacity = 0;
+    }
 }

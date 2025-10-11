@@ -1,13 +1,15 @@
-#include "meshratchet.h"
+#include "../include/meshratchet_internal.h"
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <openssl/opensslv.h>
+#include <openssl/sha.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <time.h>
 #include <sys/time.h>
 #include "../crypto/crypto.h"
@@ -16,107 +18,16 @@
 #include "../utils/replay_protection.h"
 #include "../crypto/auth.h"
 
+mr_ctx_t* mr_init_ex(const mr_config_t* config);
+int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key, const uint8_t* remote_public_key, size_t pubkey_len, mr_mode_t mode, mr_session_t** session);
+int mr_key_update(mr_session_t* session);
+int mr_quantum_key_update(mr_session_t* session);
+
+#define SHA256_DIGEST_LENGTH 32
+
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 #error "OpenSSL version 1.1.0 or later is required"
 #endif
-
-// Внутренние структуры
-struct mr_ctx {
-    mr_log_cb_t log_cb;
-    mr_random_cb_t random_cb;
-    mr_key_update_cb_t key_update_cb;
-    mr_quantum_update_cb_t quantum_update_cb;
-    mr_transport_send_cb_t transport_send_cb;
-    mr_transport_recv_cb_t transport_recv_cb;
-    void* user_data;
-    
-    uint32_t max_message_size;
-    uint32_t key_update_interval;
-    uint32_t max_skip_keys;
-    uint32_t quantum_update_interval;
-    mr_mode_t protocol_mode;
-    mr_cipher_t cipher_algorithm;
-    mr_transport_t transport;
-    
-    int enable_serialization;
-    int enable_batch_operations;
-    int enable_quantum_resistance;
-    int enable_stealth_mode;
-    int enable_multicast;
-    int enable_forward_secrecy;
-    int enable_transport_fallback;
-    
-    int ref_count;
-    mr_protocol_stats_t stats;
-};
-
-struct mr_session {
-    uint8_t root_key[MR_ROOT_KEY_LEN];
-    uint8_t send_chain_key[MR_CHAIN_KEY_LEN];
-    uint8_t recv_chain_key[MR_CHAIN_KEY_LEN];
-    uint8_t send_ratchet_priv[32];
-    uint8_t send_ratchet_pub[32];
-    uint8_t recv_ratchet_pub[32];
-    
-    // Квантово-устойчивые ключи
-    uint8_t quantum_send_key[MR_QUANTUM_RESISTANT_KEY_LEN];
-    uint8_t quantum_recv_key[MR_QUANTUM_RESISTANT_KEY_LEN];
-    uint32_t quantum_key_index;
-    
-    uint64_t send_sequence;
-    uint64_t recv_sequence;
-    uint64_t prev_send_sequence;
-    uint32_t key_update_count;
-    uint32_t quantum_update_count;
-    uint32_t messages_encrypted;
-    uint32_t messages_decrypted;
-    uint8_t session_id[MR_SESSION_ID_LEN];
-    uint8_t fingerprint[MR_FINGERPRINT_LEN];
-    
-    mr_ctx_t* ctx;
-    int is_valid;
-    int is_quantum_resistant;
-    time_t created_time;
-    time_t last_activity;
-    mr_mode_t current_mode;
-    
-    // Асинхронные операции
-    mr_pending_msg_t* pending_messages;
-    uint32_t pending_count;
-    
-    // Статистика производительности
-    struct timeval last_encrypt_time;
-    struct timeval last_decrypt_time;
-    double avg_encrypt_time;
-    double avg_decrypt_time;
-
-    mr_session_metrics_t metrics;
-    mr_crypto_ctx_t crypto_ctx;
-    uint8_t serialized_data[512];
-    mr_health_status_t health_status;
-
-    mr_replay_cache_t* replay_cache;
-    mr_auth_ctx_t auth_ctx;
-    uint8_t enable_advanced_security;
-    uint32_t security_level;
-    
-};
-
-struct mr_key_pair {
-    uint8_t public_key[32];
-    uint8_t private_key[32];
-    int is_quantum_resistant;
-    mr_ctx_t* ctx;
-};
-
-struct mr_pending_msg {
-    uint64_t message_id;
-    uint8_t* data;
-    size_t data_len;
-    mr_msg_type_t msg_type;
-    int is_encrypted;
-    struct mr_pending_msg* next;
-};
 
 // Внутренние функции
 static void secure_zero(void *p, size_t n) {
@@ -220,7 +131,7 @@ static int perform_dh(mr_ctx_t* ctx, const uint8_t* priv_key, const uint8_t* pub
     return result;
 }
 
-// Улучшенный ratchet с поддержкой разных режимов
+// ratchet с поддержкой разных режимов
 static void ratchet_chain_key(uint8_t chain_key[MR_CHAIN_KEY_LEN], uint8_t output_key[MR_CHAIN_KEY_LEN], mr_mode_t mode) {
     static const uint8_t message_label[] = "message";
     static const uint8_t ratchet_label[] = "ratchet";
@@ -243,7 +154,7 @@ static void ratchet_chain_key(uint8_t chain_key[MR_CHAIN_KEY_LEN], uint8_t outpu
          ratchet_label_ptr, ratchet_label_len, chain_key, NULL);
 }
 
-// Улучшенная генерация ключей сообщения
+// генерация ключей сообщения
 static int generate_message_keys(mr_session_t* session, uint8_t* message_key, uint8_t* nonce) {
     if (!session || !message_key || !nonce) return MR_ERROR_INVALID_PARAM;
     
@@ -275,7 +186,7 @@ static int generate_message_keys(mr_session_t* session, uint8_t* message_key, ui
     return MR_SUCCESS;
 }
 
-// Улучшенное шифрование с поддержкой разных алгоритмов
+// шифрование с поддержкой разных алгоритмов
 static int perform_encryption(mr_session_t* session, const uint8_t* plaintext, size_t pt_len,
                              const uint8_t* key, const uint8_t* nonce,
                              uint8_t* ciphertext, size_t* ct_len) {
@@ -327,7 +238,7 @@ cleanup:
     return result;
 }
 
-// Улучшенное дешифрование
+// дешифрование
 static int perform_decryption(mr_session_t* session, const uint8_t* ciphertext, size_t ct_len,
                              const uint8_t* key, const uint8_t* nonce,
                              uint8_t* plaintext, size_t* pt_len) {
@@ -524,6 +435,7 @@ int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
     }
 
     mr_session_t* sess = calloc(1, sizeof(mr_session_t));
+    uint8_t shared_secret[32];
     if (!sess) return MR_ERROR_MEMORY;
 
     sess->ctx = ctx;
@@ -536,8 +448,23 @@ int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
     struct timeval start_time, end_time;
     gettimeofday(&start_time, NULL);
 
+    sess->replay_cache = calloc(1, sizeof(mr_replay_cache_t));
+    if(!sess->replay_cache) {
+        secure_zero(sess, sizeof(mr_session_t));
+        free(sess);
+        secure_zero(shared_secret, sizeof(shared_secret));
+        return MR_ERROR_MEMORY;
+    }
+
+    if (mr_replay_cache_init(sess->replay_cache, 100, 300) != MR_SUCCESS) {
+    free(sess->replay_cache);
+    secure_zero(sess, sizeof(mr_session_t));
+    free(sess);
+    secure_zero(shared_secret, sizeof(shared_secret));
+    return MR_ERROR_MEMORY;
+}
     // Вычисление общего секрета
-    uint8_t shared_secret[32];
+    // uint8_t shared_secret[32];
     if (perform_dh(ctx, local_key->private_key, remote_public_key, shared_secret) != MR_SUCCESS) {
         free(sess);
         return MR_ERROR_CRYPTO;
@@ -603,12 +530,25 @@ int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
     }
 
     if(mr_metrics_init(sess) != MR_SUCCESS) {
-        mr_crypto_cleanup(&sess->cypto_ctx);
+        mr_crypto_cleanup(&sess->crypto_ctx);
         free(sess);
         return MR_ERROR_MEMORY;
     }
 
     sess->is_valid = 1;
+    if(!sess->replay_cache) {
+        secure_zero(sess, sizeof(mr_replay_cache_t));
+        free(sess);
+        secure_zero(shared_secret, sizeof(shared_secret));
+        return MR_ERROR_MEMORY;
+    }
+
+    if(mr_replay_cache_init(sess->replay_cache, 100, 300) != MR_SUCCESS) {
+        secure_zero(sess, sizeof(mr_session_t));
+        free(sess);
+        secure_zero(shared_secret, sizeof(shared_secret));
+        return MR_ERROR_MEMORY;
+    }
     *session = sess;
     
     gettimeofday(&end_time, NULL);
@@ -625,7 +565,7 @@ int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
     return MR_SUCCESS;
 }
 
-// Улучшенная функция шифрования с поддержкой разных режимов
+// функция шифрования с поддержкой разных режимов
 int mr_encrypt(mr_session_t* session, mr_msg_type_t msg_type,
                const uint8_t* plaintext, size_t pt_len,
                uint8_t* ciphertext, size_t ct_buffer_len, size_t* ct_len) {
@@ -635,8 +575,8 @@ int mr_encrypt(mr_session_t* session, mr_msg_type_t msg_type,
 
     if(session->enable_advanced_security) {
         uint64_t timestamp = mr_generate_message_timestamp();
-        size_t timestamp_offset = offset;
-        memcpy(ciphertext + timestamp_offset, &timestamp, sizeof(timestamp));
+        size_t offset = 0;  
+        memcpy(ciphertext + offset, &timestamp, sizeof(timestamp));
         offset += sizeof(timestamp);
 
         uint8_t auth_tag[32];
@@ -746,7 +686,7 @@ int mr_encrypt(mr_session_t* session, mr_msg_type_t msg_type,
     return MR_SUCCESS;
 }
 
-// Улучшенная функция дешифрования
+// функция дешифрования
 int mr_decrypt(mr_session_t* session, 
                const uint8_t* ciphertext, size_t ct_len,
                uint8_t* plaintext, size_t pt_buffer_len, size_t* pt_len,
@@ -830,7 +770,23 @@ int mr_decrypt(mr_session_t* session,
         return MR_ERROR_CRYPTO;
     }
 
+
     *pt_len = decrypted_len;
+
+    if(session->enable_advanced_security) {
+        uint8_t message_hash[SHA256_DIGEST_LENGTH];
+        EVP_MD_CTX* md_ctx = EVP_MD_CTX_new();
+        if(md_ctx) {
+            if(EVP_DigestInit_ex(md_ctx, EVP_sha256(), NULL) == 1 && EVP_DigestUpdate(md_ctx, ciphertext, ct_len) == 1 && EVP_DigestFinal_ex(md_ctx, message_hash, NULL) == 1) {
+                if(mr_replay_check_and_add(session->replay_cache, message_hash, sizeof(message_hash)) != MR_SUCCESS) {
+                    EVP_MD_CTX_free(md_ctx);
+                    log_message(session->ctx, MR_LOG_ERROR, "Replay attack detected!");
+                    return MR_ERROR_SEQUENCE;                   
+                }
+            }
+            EVP_MD_CTX_free(md_ctx);
+        }
+    }
     
     gettimeofday(&end_time, NULL);
     double decrypt_time = time_diff_us(start_time, end_time) / 1000.0;
@@ -844,19 +800,22 @@ int mr_decrypt(mr_session_t* session,
 
     if(session->enable_advanced_security) {
         uint64_t timestamp;
-        memcpy(&timestamp, ciphertext + timestamp_offset, sizeof(timestamp));
-        if(mr_verify_message_timestamp(session, timestamp) != MR_SUCCESS) {
+        memcpy(&timestamp, ciphertext, sizeof(timestamp)); 
+        uint64_t current_time = mr_generate_message_timestamp();
+        if(mr_verify_message_timestamp(timestamp, current_time, session->replay_cache->window_seconds) != MR_SUCCESS) {
             log_message(session->ctx, MR_LOG_ERROR, "Message timestamp verification failed!");
             return MR_ERROR_VERIFICATION;
         }
 
         uint8_t received_auth_tag[16];
-        memcpy(received_auth_tag(&session->auth_ctx, plaintext, *pt_len, received_auth_tag, 16) != MR_SUCCESS) {
-            log_message(session->ctx, MR_LOG_ERROR, "message auth failed!");
-            return MR_ERROR_VERIFICATION;
+        if (mr_auth_generate_tag(&session->auth_ctx, plaintext, *pt_len, received_auth_tag, 16) == MR_SUCCESS) {
+            if (memcmp(received_auth_tag, ciphertext + sizeof(timestamp), 16) != 0) {
+                log_message(session->ctx, MR_LOG_ERROR, "Message authentication failed!");
+                return MR_ERROR_VERIFICATION;
+            }
         }
-
-        if(mr_replay_check_and_add(session, ciphertext, ct_len, session->recv_sequence) != MR_SUCCESS){
+        
+        if(mr_replay_check_and_add(session->replay_cache, ciphertext, ct_len) != MR_SUCCESS){
             log_message(session->ctx, MR_LOG_ERROR, "replay attack detected!");
             return MR_ERROR_SEQUENCE;
         }
@@ -873,7 +832,6 @@ int mr_decrypt(mr_session_t* session,
     return MR_SUCCESS;
 }
 
-// Новые улучшенные функции
 
 int mr_quantum_key_update(mr_session_t* session) {
     if (!session || !session->is_valid) return MR_ERROR_INVALID_PARAM;
@@ -905,7 +863,7 @@ int mr_enable_quantum_resistance(mr_session_t* session) {
     if (!session || !session->is_valid) return MR_ERROR_INVALID_PARAM;
 
     if (session->is_quantum_resistant) {
-        return MR_SUCCESS; // Уже включено
+        return MR_SUCCESS; 
     }
 
     // Инициализация квантовых ключей
@@ -974,7 +932,7 @@ int mr_get_performance_metrics(mr_session_t* session,
     
     if (encryption_time_ms) *encryption_time_ms = session->avg_encrypt_time;
     if (decryption_time_ms) *decryption_time_ms = session->avg_decrypt_time;
-    if (key_update_time_ms) *key_update_time_ms = 0.0; // Можно добавить измерение
+    if (key_update_time_ms) *key_update_time_ms = 0.0; 
     
     return MR_SUCCESS;
 }
@@ -1002,7 +960,7 @@ void mr_session_free(mr_session_t* session) {
             free(current);
             current = next;
         }
-        
+        mr_replay_cache_cleanup(session->replay_cache);
         if (session->ctx) {
             mr_cleanup(session->ctx);
         }
@@ -1063,5 +1021,35 @@ int mr_get_supported_features(char* buffer, size_t buffer_len) {
 }
 
 int handshake(mr_ctx_t* ctx, const uint8_t* per_pubkey) {
+    return MR_SUCCESS;
+}
 
+const uint8_t* mr_key_pair_get_public_key(const mr_key_pair_t *key_pair) {
+    if(!key_pair) return NULL;
+    return key_pair->public_key;
+}
+
+int mr_key_pair_is_quantum_resistant(const mr_key_pair_t* key_pair) {
+    if(!key_pair) return 0;
+    return key_pair->is_quantum_resistant;
+}
+
+int mr_key_update(mr_session_t* session) {
+    if(!session || !session->is_valid) {
+        return MR_ERROR_INVALID_PARAM;
+    }
+
+    // Генерация новых ratchet ключей
+
+    if(generate_random(session->ctx, session->send_ratchet_priv, 32) != MR_SUCCESS) {
+        return MR_ERROR_CRYPTO;
+    }
+
+    ratchet_chain_key(session->send_chain_key, session->send_chain_key, session->current_mode);
+    ratchet_chain_key(session->recv_chain_key, session->recv_chain_key, session->current_mode);
+    
+    session->key_update_count++;
+    session->ctx->stats.key_updates_performed++;
+    
+    return MR_SUCCESS;
 }
