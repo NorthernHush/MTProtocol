@@ -1,3 +1,13 @@
+/**
+ * @file meshratchet.c
+ * @author Mesh Security Labs
+ * @brief 
+ * @version v0.4
+ * @date 2025-10-12
+ * @copyright Copyright (c) 2025
+ * 
+ */
+
 #include "../include/meshratchet_internal.h"
 #include <openssl/evp.h>
 #include <openssl/hmac.h>

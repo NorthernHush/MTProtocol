@@ -88,6 +88,13 @@ typedef enum {
     MR_MSG_TYPE_QUANTUM_UPDATE = 8
 } mr_msg_type_t;
 
+typedef enum {
+    MR_HEALTH_UNKNOWN = 0,
+    MR_HEALTH_GOOD = 1,
+    MR_HEALTH_WARNING = 2,
+    MR_HEALTH_CRITICAL = 3
+} mr_health_status_t;
+
 // Уровни логирования
 typedef enum {
     MR_LOG_ERROR = 0,
@@ -140,6 +147,15 @@ typedef struct {
     int enable_forward_secrecy;
     int enable_transport_fallback;
 } mr_config_t;
+
+typedef struct {
+    // Поля для метрик сессии
+    uint64_t total_encrypted;
+    uint64_t total_decrypted;
+    uint32_t errors;
+    double avg_encrypt_time;
+    double avg_decrypt_time;
+} mr_session_metrics_t;
 
 // Информация о сессии
 typedef struct {

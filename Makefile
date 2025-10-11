@@ -60,6 +60,11 @@ $(EXAMPLE_CPP): $(EXAMPLE_CPP).cpp $(CPP_OBJECT) $(STATIC_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(CPP_OBJECT) $(STATIC_LIB) $(LIBS)
 	@echo "✅ Пример C++ собран: $(EXAMPLE_CPP)"
 
+# TARGET = libmeshratchet.a
+
+# $(TARGET): $(OBJECTS)
+# 	ar rcs $@ $^
+
 # Правила компиляции
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

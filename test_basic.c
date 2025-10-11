@@ -1,4 +1,8 @@
 // test_basic.c
+/*
+* gcc -o test_basic test_basic.c -I./include -L. -lmeshratchet -lssl -lcrypto -lz
+*/
+
 #include "include/meshratchet.h"
 #include <stdio.h>
 #include <string.h>

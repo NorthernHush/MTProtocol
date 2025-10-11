@@ -2,6 +2,11 @@
 #include "metrics.h"
 #include <string.h>
 #include <time.h>
+#include <stdio.h>  
+
+// Подключаем внутренние структуры
+#define MESHRATCHET_INTERNAL
+#include "../include/meshratchet_internal.h"
 
 int mr_metrics_init(mr_session_t* session) {
     if (!session) return MR_ERROR_INVALID_PARAM;
@@ -74,10 +79,10 @@ int mr_metrics_get_detailed_report(const mr_session_t* session, char* report, si
         "  Errors: %u\n"
         "  Avg Encrypt Time: %.2f ms\n"
         "  Avg Decrypt Time: %.2f ms\n",
-        session->ctx->stats.total_messages_sent,
-        session->ctx->stats.total_messages_received,
-        session->ctx->stats.total_bytes_encrypted,
-        session->ctx->stats.total_bytes_decrypted,
+        (unsigned long)session->ctx->stats.total_messages_sent,
+        (unsigned long)session->ctx->stats.total_messages_received,
+        (unsigned long)session->ctx->stats.total_bytes_encrypted,
+        (unsigned long)session->ctx->stats.total_bytes_decrypted,
         session->ctx->stats.errors_encountered,
         session->avg_encrypt_time,
         session->avg_decrypt_time
