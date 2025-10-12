@@ -43,6 +43,9 @@ struct mr_session {
     mr_pending_msg_t* pending_messages;
     uint32_t pending_count;
     
+    uint8_t local_public_key[32];
+    uint8_t remote_public_key[32];
+
     struct timeval last_encrypt_time;
     struct timeval last_decrypt_time;
     double avg_encrypt_time;
@@ -57,6 +60,11 @@ struct mr_session {
     mr_auth_ctx_t auth_ctx;
     uint8_t enable_advanced_security;
     uint32_t security_level;
+
+    time_t last_heartbeat_received;
+    time_t last_heartbeat_sent;
+    uint8_t heartbeat_missed_count;
+    int is_heartbeat_active;
 };
 
 struct mr_ctx {
@@ -83,6 +91,7 @@ struct mr_ctx {
     int enable_multicast;
     int enable_forward_secrecy;
     int enable_transport_fallback;
+    int enable_zkp_auth;
     
     int ref_count;
     mr_protocol_stats_t stats;

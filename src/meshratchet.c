@@ -27,6 +27,7 @@
 #include "../utils/metrics.h"
 #include "../utils/replay_protection.h"
 #include "../crypto/auth.h"
+#include <qrencode.h>
 
 mr_ctx_t* mr_init_ex(const mr_config_t* config);
 int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key, const uint8_t* remote_public_key, size_t pubkey_len, mr_mode_t mode, mr_session_t** session);
@@ -430,11 +431,8 @@ void mr_free_key_pair(mr_key_pair_t* key_pair) {
     }
 }
 
-int mr_session_create(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
-                     const uint8_t* remote_public_key, size_t pubkey_len,
-                     mr_session_t** session) {
-    return mr_session_create_advanced(ctx, local_key, remote_public_key, pubkey_len, 
-                                     ctx->protocol_mode, session);
+int mr_session_create(mr_ctx_t* ctx, const mr_key_pair_t* local_key, const uint8_t* remote_public_key, size_t pubkey_len, mr_session_t** session) {
+    return mr_session_create_advanced(ctx, local_key, remote_public_key, pubkey_len, ctx->protocol_mode, session);
 }
 
 int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
@@ -445,7 +443,6 @@ int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
     }
 
     mr_session_t* sess = calloc(1, sizeof(mr_session_t));
-    uint8_t shared_secret[32];
     if (!sess) return MR_ERROR_MEMORY;
 
     sess->ctx = ctx;
@@ -455,117 +452,136 @@ int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
     sess->current_mode = mode;
     sess->is_quantum_resistant = local_key->is_quantum_resistant;
 
+    // ======== СОХРАНЯЕМ КЛЮЧИ ДЛЯ ОТПЕЧАТКА ===========
+    memcpy(sess->local_public_key, mr_key_pair_get_public_key(local_key), 32);
+    memcpy(sess->remote_public_key, remote_public_key, 32);
+
     struct timeval start_time, end_time;
     gettimeofday(&start_time, NULL);
 
+    // Инициализация replay cache
     sess->replay_cache = calloc(1, sizeof(mr_replay_cache_t));
-    if(!sess->replay_cache) {
-        secure_zero(sess, sizeof(mr_session_t));
-        free(sess);
-        secure_zero(shared_secret, sizeof(shared_secret));
-        return MR_ERROR_MEMORY;
+    if (!sess->replay_cache) {
+        goto error;
     }
-
     if (mr_replay_cache_init(sess->replay_cache, 100, 300) != MR_SUCCESS) {
-    free(sess->replay_cache);
-    secure_zero(sess, sizeof(mr_session_t));
-    free(sess);
-    secure_zero(shared_secret, sizeof(shared_secret));
-    return MR_ERROR_MEMORY;
-}
-    // Вычисление общего секрета
-    // uint8_t shared_secret[32];
-    if (perform_dh(ctx, local_key->private_key, remote_public_key, shared_secret) != MR_SUCCESS) {
-        free(sess);
-        return MR_ERROR_CRYPTO;
+        goto error;
     }
 
-    // Генерация корневого ключа
+    sess->is_hearbeat_active = ctx->enable_hearbeat;
+    if(ctx->enable_hearbeat) {
+        sess->last_heartbeat_received = time(NULL);
+        sess->last_heartbeat_sent = time(NULL);
+        sess->heartbeat_missed_cout = 0;
+        mr_send_heartbeat(sess);
+    }
+
+    // === ГЕНЕРАЦИЯ session_id и fingerprint ===
+    if (generate_random(ctx, sess->session_id, MR_SESSION_ID_LEN) != MR_SUCCESS ||
+        generate_random(ctx, sess->fingerprint, MR_FINGERPRINT_LEN) != MR_SUCCESS) {
+        goto error;
+    }
+
+    // === ZKP АУТЕНТИФИКАЦИЯ (если включена) ===
+    if (ctx->enable_zkp_auth) {
+        log_message(ctx, MR_LOG_INFO, "Starting ZKP authentication...");
+
+        uint8_t zkp_context[MR_SESSION_ID_LEN + 32];
+        memcpy(zkp_context, sess->session_id, MR_SESSION_ID_LEN);
+        memcpy(zkp_context + MR_SESSION_ID_LEN, remote_public_key, 32);
+        const size_t zkp_ctx_len = MR_SESSION_ID_LEN + 32;
+
+        uint8_t my_R[32], my_s[32];
+        if (mr_zkp_prove(local_key->private_key, local_key->public_key,
+                         zkp_context, zkp_ctx_len, my_R, my_s) != MR_SUCCESS) {
+            log_message(ctx, MR_LOG_ERROR, "Failed to generate ZKP proof");
+            goto error;
+        }
+
+        uint8_t zkp_send[64];
+        memcpy(zkp_send, my_R, 32);
+        memcpy(zkp_send + 32, my_s, 32);
+        if (ctx->transport_send_cb &&
+            ctx->transport_send_cb(zkp_send, 64, ctx->user_data) != MR_SUCCESS) {
+            log_message(ctx, MR_LOG_ERROR, "Failed to send ZKP proof");
+            goto error;
+        }
+
+        uint8_t zkp_recv[64];
+        size_t received = 0;
+        if (!ctx->transport_recv_cb ||
+            ctx->transport_recv_cb(zkp_recv, sizeof(zkp_recv), &received, ctx->user_data) != MR_SUCCESS ||
+            received != 64) {
+            log_message(ctx, MR_LOG_ERROR, "Failed to receive ZKP proof");
+            goto error;
+        }
+
+        if (mr_zkp_verify(remote_public_key, zkp_context, zkp_ctx_len,
+                          zkp_recv, zkp_recv + 32) != MR_SUCCESS) {
+            log_message(ctx, MR_LOG_ERROR, "ZKP verification failed! Possible MITM.");
+            goto error;
+        }
+
+        log_message(ctx, MR_LOG_INFO, "ZKP authentication successful.");
+    }
+
+    // === ОСНОВНАЯ ЛОГИКА: DH, HKDF, ЦЕПОЧКИ ===
+    uint8_t shared_secret[32];
+    if (perform_dh(ctx, local_key->private_key, remote_public_key, shared_secret) != MR_SUCCESS) {
+        goto error;
+    }
+
     if (hkdf_derive(NULL, 0, shared_secret, 32, 
                    (const uint8_t*)"MeshRatchetRoot", 15,
                    sess->root_key, MR_ROOT_KEY_LEN) != MR_SUCCESS) {
-        secure_zero(sess, sizeof(mr_session_t));
-        free(sess);
         secure_zero(shared_secret, sizeof(shared_secret));
-        return MR_ERROR_CRYPTO;
+        goto error;
     }
 
-    // Инициализация цепочек
     if (hkdf_derive(sess->root_key, MR_ROOT_KEY_LEN, NULL, 0,
                    (const uint8_t*)"SendChain", 9,
                    sess->send_chain_key, MR_CHAIN_KEY_LEN) != MR_SUCCESS ||
         hkdf_derive(sess->root_key, MR_ROOT_KEY_LEN, NULL, 0,
                    (const uint8_t*)"RecvChain", 9,
                    sess->recv_chain_key, MR_CHAIN_KEY_LEN) != MR_SUCCESS) {
-        secure_zero(sess, sizeof(mr_session_t));
-        free(sess);
         secure_zero(shared_secret, sizeof(shared_secret));
-        return MR_ERROR_CRYPTO;
+        goto error;
     }
 
-    // Генерация ratchet ключей
     if (generate_random(ctx, sess->send_ratchet_priv, 32) != MR_SUCCESS) {
-        secure_zero(sess, sizeof(mr_session_t));
-        free(sess);
         secure_zero(shared_secret, sizeof(shared_secret));
-        return MR_ERROR_CRYPTO;
+        goto error;
     }
-
     memcpy(sess->recv_ratchet_pub, remote_public_key, 32);
-    
-    // Генерация ID сессии и fingerprint
-    if (generate_random(ctx, sess->session_id, MR_SESSION_ID_LEN) != MR_SUCCESS ||
-        generate_random(ctx, sess->fingerprint, MR_FINGERPRINT_LEN) != MR_SUCCESS) {
-        secure_zero(sess, sizeof(mr_session_t));
-        free(sess);
-        secure_zero(shared_secret, sizeof(shared_secret));
-        return MR_ERROR_CRYPTO;
-    }
 
-    // Инициализация квантовых ключей если нужно
+    // Инициализация квантовых ключей
     if (sess->is_quantum_resistant) {
         if (generate_random(ctx, sess->quantum_send_key, MR_QUANTUM_RESISTANT_KEY_LEN) != MR_SUCCESS ||
             generate_random(ctx, sess->quantum_recv_key, MR_QUANTUM_RESISTANT_KEY_LEN) != MR_SUCCESS) {
-            secure_zero(sess, sizeof(mr_session_t));
-            free(sess);
             secure_zero(shared_secret, sizeof(shared_secret));
-            return MR_ERROR_CRYPTO;
+            goto error;
         }
         sess->quantum_key_index = 0;
     }
 
-    if(mr_crypto_init(&sess->crypto_ctx, ctx->cipher_algorithm) != MR_SUCCESS) {
-        free(sess);
-        return MR_ERROR_CRYPTO;
+    if (mr_crypto_init(&sess->crypto_ctx, ctx->cipher_algorithm) != MR_SUCCESS) {
+        secure_zero(shared_secret, sizeof(shared_secret));
+        goto error;
     }
 
-    if(mr_metrics_init(sess) != MR_SUCCESS) {
+    if (mr_metrics_init(sess) != MR_SUCCESS) {
         mr_crypto_cleanup(&sess->crypto_ctx);
-        free(sess);
-        return MR_ERROR_MEMORY;
+        secure_zero(shared_secret, sizeof(shared_secret));
+        goto error;
     }
 
     sess->is_valid = 1;
-    if(!sess->replay_cache) {
-        secure_zero(sess, sizeof(mr_replay_cache_t));
-        free(sess);
-        secure_zero(shared_secret, sizeof(shared_secret));
-        return MR_ERROR_MEMORY;
-    }
-
-    if(mr_replay_cache_init(sess->replay_cache, 100, 300) != MR_SUCCESS) {
-        secure_zero(sess, sizeof(mr_session_t));
-        free(sess);
-        secure_zero(shared_secret, sizeof(shared_secret));
-        return MR_ERROR_MEMORY;
-    }
     *session = sess;
-    
+
     gettimeofday(&end_time, NULL);
     double setup_time = time_diff_us(start_time, end_time) / 1000.0;
-    
     secure_zero(shared_secret, sizeof(shared_secret));
-    
+
     log_message(ctx, MR_LOG_INFO, 
                 "New session created (ID: %02x%02x..., Mode: %d, Quantum: %d, Setup: %.2fms)", 
                 sess->session_id[0], sess->session_id[1], mode, 
@@ -573,6 +589,18 @@ int mr_session_create_advanced(mr_ctx_t* ctx, const mr_key_pair_t* local_key,
     
     ctx->stats.sessions_created++;
     return MR_SUCCESS;
+
+error:
+    if (sess) {
+        if (sess->replay_cache) {
+            mr_replay_cache_cleanup(sess->replay_cache);
+            free(sess->replay_cache);
+        }
+        mr_crypto_cleanup(&sess->crypto_ctx);
+        secure_zero(sess, sizeof(mr_session_t));
+        free(sess);
+    }
+    return MR_ERROR_VERIFICATION;
 }
 
 // функция шифрования с поддержкой разных режимов
@@ -839,6 +867,13 @@ int mr_decrypt(mr_session_t* session,
                 "Message decrypted (type: %d, size: %zu, time: %.2fms)", 
                 *msg_type, *pt_len, decrypt_time);
     
+    if(*msg_type == MR_MSG_TYPE_HEARTBEAT) {
+        session->last_heartbeat_received = time(NULL);
+        session->heartbeat_missed_cout = 0;
+        log_message(session->ctx, MR_LOG_DEBUG, "Heartbeat received!");
+        return MR_SUCCESS;
+    }
+
     return MR_SUCCESS;
 }
 
@@ -1063,3 +1098,105 @@ int mr_key_update(mr_session_t* session) {
     
     return MR_SUCCESS;
 }
+
+int mr_send_heartbeat(mr_session_t* session) {
+    if(!session || !session->is_valid) return MR_ERROR_INVALID_PARAM;
+
+    uint8_t dummy = 0;
+    uint8_t ct[128];
+    size_t ct_len = 0;
+
+    int res = mr_encrypt(session, MR_MSG_TYPE_HEARTBEAT, &dummy, 1, ct, sizeof(ct), &ct_len);
+
+    if(session->ctx->transport_send_cb) {
+        session->ctx->transport_send_cb(ct, ct_len, session->ctx->user_data);
+    }
+
+    session->last_heartbeat_sent = time(NULL);
+    return MR_SUCCESS;
+}
+
+// Список из 256 слов для человеко-читаемых отпечатков (Fingerprint Words)
+static const char* FINGERPRINT_WORDS[256] = {
+    "able", "acid", "aged", "also", "area", "army", "away", "baby", "back", "ball",
+    "band", "bank", "base", "bath", "bear", "beat", "beer", "bell", "belt", "best",
+    "bill", "bird", "bite", "blue", "boat", "body", "bomb", "bond", "bone", "book",
+    "boom", "born", "boss", "both", "bowl", "bulk", "burn", "bury", "bush", "busy",
+    "call", "calm", "came", "camp", "card", "care", "case", "cash", "cast", "cell",
+    "chat", "chip", "city", "clay", "club", "coal", "coat", "code", "cold", "come",
+    "cook", "cool", "cope", "copy", "core", "cost", "crew", "crop", "dark", "data",
+    "date", "dawn", "days", "dead", "deal", "dear", "debt", "deep", "deny", "desk",
+    "dial", "dice", "diet", "disk", "dock", "door", "down", "draw", "drug", "dual",
+    "duck", "dump", "duty", "each", "earn", "ease", "east", "easy", "echo", "edge",
+    "edit", "else", "emit", "end", "epic", "even", "ever", "evil", "exam", "exit",
+    "face", "fact", "fail", "fair", "fake", "fall", "fame", "fast", "feed", "feel",
+    "feet", "file", "fill", "film", "find", "fine", "fire", "firm", "fish", "five",
+    "flat", "flow", "food", "foot", "ford", "form", "fort", "four", "free", "frog",
+    "from", "fuel", "full", "fund", "gain", "game", "gate", "gear", "gene", "gift",
+    "girl", "give", "glad", "goal", "goat", "gold", "good", "grab", "gray", "grid",
+    "grow", "hair", "half", "hall", "hand", "hang", "hard", "harm", "hate", "have",
+    "head", "hear", "heat", "help", "hero", "hide", "high", "hill", "hint", "hire",
+    "hold", "hole", "home", "hope", "horn", "host", "hour", "huge", "hung", "hunt",
+    "hurt", "idea", "idle", "inch", "into", "iron", "item", "jack", "jane", "join",
+    "joke", "jump", "jury", "just", "keen", "keep", "kick", "kill", "kind", "king",
+    "knee", "knew", "know", "lace", "lack", "lady", "laid", "lake", "land", "last",
+    "late", "lead", "leaf", "lean", "leap", "left", "less", "life", "lift", "like",
+    "line", "link", "list", "live", "load", "loan", "lock", "logo", "long", "look",
+    "loop", "lose", "loss", "lost", "love", "luck", "lung", "mail", "main", "make",
+    "male", "mall", "many", "map", "mark", "mask", "mass", "mate", "math", "meal",
+    "mean", "meet", "menu", "mere", "mesh", "mess", "mice", "mile", "milk", "mill",
+    "mine", "miss", "mode", "moon", "more", "most", "move", "much", "must", "name",
+    "navy", "near", "neck", "need", "nest", "news", "next", "nice", "nick", "nine",
+    "node", "none", "noon", "norm", "nose", "note", "okay", "once", "only", "onto",
+    "open", "oral", "over", "pace", "pack", "page", "paid", "pain", "pair", "pale",
+    "palm", "pane", "park", "part", "pass", "past", "path", "peak", "peer", "pick",
+    "pile", "pill", "pine", "pink", "pipe", "plan", "play", "plot", "plug", "plus",
+    "poem", "poet", "pole", "poll", "pool", "poor", "port", "pose", "post", "pour",
+    "pray", "prep", "press", "price", "pride", "prime", "print", "prior", "prize",
+    "prob", "prod", "prof", "proof", "pull", "pure", "push", "quit", "race", "rack",
+    "rail", "rain", "rank", "rare", "rate", "rather", "read", "ready", "real", "rear",
+    "reason", "rebel", "record", "red", "reduce", "refer", "reflect", "regret", "reign",
+    "reject", "remain", "remove", "repair", "repeat", "replace", "reply", "report",
+    "rest", "result", "return", "reveal", "review", "reward", "ride", "right", "ring",
+    "rise", "risk", "road", "rock", "role", "roll", "roof", "room", "root", "rose",
+    "rough", "round", "route", "royal", "rub", "rule", "run", "rush", "sad", "safe",
+    "said", "sail", "salt", "same", "sand", "save", "say", "scale", "scan", "scare",
+    "scene", "scheme", "school", "science", "score", "screen", "script", "sea", "search",
+    "season", "seat", "second", "secret", "section", "secure", "see", "seed", "seek",
+    "seem", "select", "sell", "send", "sense", "sent", "series", "serve", "session",
+    "set", "seven", "several", "sex", "shade", "shadow", "shake", "shall", "shape",
+    "share", "sharp", "she", "sheet", "shelf", "shell", "shield", "shift", "shine",
+    "ship", "shirt", "shock", "shoe", "shoot", "shop", "short", "should", "show",
+    "side", "sign", "silent", "silver", "similar", "simple", "since", "sing", "single",
+    "sink", "site", "situation", "six", "size", "skill", "skin", "sky", "sleep", "slide",
+    "small", "smart", "smell", "smile", "smoke", "smooth", "snake", "snow", "so", "social",
+    "soft", "software", "soil", "solid", "solve", "some", "son", "song", "soon", "sort",
+    "sound", "source", "south", "space", "spare", "speak", "special", "speed", "spell",
+    "spend", "sphere", "spider", "split", "sport", "spot", "spread", "spring", "square",
+    "stable", "staff", "stage", "stairs", "stand", "standard", "star", "start", "state",
+    "stay", "step", "stick", "still", "stock", "stone", "stop", "store", "storm", "story",
+    "strain", "strange", "street", "stretch", "strike", "string", "strip", "strong", "structure",
+    "study", "stuff", "style", "subject", "submit", "subway", "success", "such", "sudden",
+    "suffer", "suggest", "suit", "summer", "sun", "super", "supply", "support", "sure", "surface",
+    "surge", "surprise", "surround", "survey", "suspect", "sustain", "swap", "swear", "sweet",
+    "swift", "swing", "switch", "symbol", "system", "table", "take", "talk", "tank", "tap",
+    "target", "task", "tax", "teach", "team", "tell", "ten", "tend", "term", "test", "text",
+    "than", "thank", "that", "the", "theme", "then", "theory", "there", "they", "thing",
+    "think", "third", "this", "those", "though", "thought", "three", "through", "throw",
+    "thus", "ticket", "tie", "tight", "time", "tiny", "tip", "tire", "title", "to", "today",
+    "toe", "together", "token", "tomorrow", "tone", "tongue", "tonight", "too", "tool", "top",
+    "topic", "total", "touch", "tough", "tour", "toward", "tower", "town", "track", "trade",
+    "train", "transfer", "trap", "travel", "tree", "trend", "trial", "trip", "trouble", "true",
+    "trust", "truth", "try", "tube", "turn", "twist", "two", "type", "under", "unit", "until",
+    "up", "upon", "upper", "urban", "urge", "use", "usual", "vacation", "valley", "value",
+    "variety", "various", "vary", "vast", "vehicle", "venture", "verb", "verify", "very",
+    "vessel", "veteran", "via", "victim", "victory", "video", "view", "village", "violate",
+    "voice", "volume", "vote", "wage", "wait", "walk", "wall", "want", "war", "warm",
+    "warn", "wash", "watch", "water", "wave", "way", "we", "weak", "wealth", "weapon",
+    "wear", "weather", "web", "week", "weigh", "welcome", "well", "west", "wheel", "when",
+    "where", "whether", "which", "while", "whisper", "white", "who", "whole", "whom", "whose",
+    "why", "wide", "wife", "wild", "will", "win", "wind", "window", "wine", "wing", "winter",
+    "wire", "wise", "wish", "with", "within", "without", "woman", "wonder", "wood", "word",
+    "work", "world", "worry", "worth", "would", "write", "wrong", "yard", "year", "yellow",
+    "yes", "yet", "you", "young", "your", "zero", "zone", "zoom", "zulu"
+};

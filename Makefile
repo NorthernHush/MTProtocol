@@ -18,6 +18,7 @@ SOURCES = src/meshratchet.c \
           utils/utils.c \
           utils/replay_protection.c \
           utils/metrics.c \
+		  crypto/zkp.c \
           session/storage.c
 
 OBJECTS = $(SOURCES:.c=.o)

@@ -16,6 +16,9 @@ const uint8_t* mr_key_pair_get_public_key(const mr_key_pair_t* key_pair);
 
 // Проверка квантовой устойчивости  
 int mr_key_pair_is_quantum_resistant(const mr_key_pair_t* key_pair);
+int mr_generate_fingerprint_qr(const mr_session_t* session, char** qr_ascii_out);
+
+void mr_free_qr(char* qr);
 
 // === Все остальные определения (константы, enum, typedef) ===
 #ifdef __cplusplus
@@ -24,21 +27,23 @@ extern "C" {
 
 // Версия протокола
 #define MESHRATCHET_VERSION "3.0.0"
-#define MESHRATCHET_AUTHOR "Mesh Security Team"
+#define MESHRATCHET_AUTHOR "Mesh Security Labs"
 #define MESHRATCHET_FEATURES "Quantum-Resistant, Multi-Transport, Stealth Mode"
 
 // Константы
-#define MR_CHAIN_KEY_LEN      32
-#define MR_ROOT_KEY_LEN       32
-#define MR_NONCE_LEN          12
-#define MR_TAG_LEN            16
-#define MR_MAX_MSG_SIZE       65536
-#define MR_MAX_SKIP_KEYS      1000
-#define MR_KEY_UPDATE_INTERVAL 1000
-#define MR_SESSION_ID_LEN     32
-#define MR_FINGERPRINT_LEN    16
-#define MR_MAX_PENDING_MSGS   100
-#define MR_QUANTUM_RESISTANT_KEY_LEN 64
+#define MR_CHAIN_KEY_LEN                32
+#define MR_ROOT_KEY_LEN                 32
+#define MR_NONCE_LEN                    12
+#define MR_TAG_LEN                      16
+#define MR_MAX_MSG_SIZE                 65536
+#define MR_MAX_SKIP_KEYS                1000
+#define MR_KEY_UPDATE_INTERVAL          1000
+#define MR_SESSION_ID_LEN               32
+#define MR_FINGERPRINT_LEN              16
+#define MR_MAX_PENDING_MSGS             100
+#define MR_QUANTUM_RESISTANT_KEY_LEN    64
+#define MR_HEARTBEAT_INTERVAL_DEFAULT   30
+#define MR_HEARBEAT_MAX_MISSED          3
 
 // Режимы работы протокола
 typedef enum {
@@ -146,6 +151,10 @@ typedef struct {
     int enable_multicast;
     int enable_forward_secrecy;
     int enable_transport_fallback;
+    int enable_zkp_auth;
+
+    int enable_heartbeat;
+    uint32_t hearbeat_interval;
 } mr_config_t;
 
 typedef struct {
@@ -193,6 +202,9 @@ mr_ctx_t* mr_init(void);
 mr_ctx_t* mr_init_ex(const mr_config_t* config);
 void mr_cleanup(mr_ctx_t* ctx);
 
+int mr_get_default_config(mr_config_t* config);
+int mr_get_session_info(const mr_session_t* session, mr_session_t* info);
+
 // Получение публичного ключа
 const uint8_t* mr_key_pair_get_public_key(const mr_key_pair_t* key_pair);
 
@@ -217,11 +229,16 @@ void mr_session_free(mr_session_t* session);
 int mr_encrypt(mr_session_t* session, mr_msg_type_t msg_type,
                const uint8_t* plaintext, size_t pt_len,
                uint8_t* ciphertext, size_t ct_buffer_len, size_t* ct_len);
-
+               
 int mr_decrypt(mr_session_t* session, 
                const uint8_t* ciphertext, size_t ct_len,
                uint8_t* plaintext, size_t pt_buffer_len, size_t* pt_len,
                mr_msg_type_t* msg_type);
+// Zero-Knowledge Proof Authenfication
+int mr_zkp_prove(const uint8_t* privkey, const uint8_t* pubkey, const uint8_t* context, size_t context_len, uint8_t R_out[32], uint8_t s_out[32]);
+
+int mr_zkp_verify(const uint8_t* pubkey, const uint8_t* context, size_t context_len, const uint8_t R[32], const uint8_t s[32]);
+
 
 // Утилиты
 const char* mr_error_string(mr_result_t error);
