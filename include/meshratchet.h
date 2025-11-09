@@ -1,6 +1,7 @@
 #ifndef MESHRATCHET_H
 #define MESHRATCHET_H
 
+#include <cstdint>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -10,6 +11,7 @@ typedef struct mr_session mr_session_t;
 typedef struct mr_key_pair mr_key_pair_t;
 typedef struct mr_pending_msg mr_pending_msg_t;
 typedef struct mr_quantum_ctx mr_quantum_ctx_t;
+typedef struct mr_group_session mr_group_session_t;
 
 // Получение публичного ключа
 const uint8_t* mr_key_pair_get_public_key(const mr_key_pair_t* key_pair);
@@ -207,9 +209,18 @@ int mr_get_session_info(const mr_session_t* session, mr_session_t* info);
 
 // Получение публичного ключа
 const uint8_t* mr_key_pair_get_public_key(const mr_key_pair_t* key_pair);
+int mr_session_from_bytes(mr_ctx_t* ctx, const uint8_t* data, size_t data_len, mr_session_t** session);
 
 // Проверка квантовой устойчивости
 int mr_key_pair_is_quantum_resistant(const mr_key_pair_t* key_pair);
+
+mr_group_session_t* mr_group_create(mr_ctx_t* ctx, const mr_key_pair_t* admin_key);
+int mr_group_add_member(mr_group_session_t* group, const uint8_t* member_pubkey, size_t pubkey_len);
+int mr_group_remove_member(mr_group_session_t* group, const uint8_t* plaintext, size_t pt_len);
+int mr_group_encrypt(mr_group_session_t* group, const uint8_t* plaintext, size_t pt_len, uint8_t* ciphertext, size_t ct_buffer_len, size_t* ct_len);
+int mr_group_decrypt(mr_group_session_t* group, const uint8_t* ciphertext, size_t ct_len, uint8_t* plaintext, size_t pt_buffer_len, size_t* pt_len);
+
+void mr_group_free(mr_group_session_t* group);
 
 // Генерация ключевой пары
 mr_key_pair_t* mr_generate_key_pair(mr_ctx_t* ctx);

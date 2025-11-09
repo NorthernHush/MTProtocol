@@ -1,10 +1,12 @@
 // cpp/MeshRatchet.cpp
 #include "../include/MeshRatchet.hpp"
+#include <cstdint>
 #include <stdexcept>
 #include <cstring>
 
-namespace meshratchet {
+using namespace std;
 
+namespace meshratchet {
 // Context
 Context::Context(const mr_config_t* config) {
     mr_ctx_t* raw = mr_init_ex(config);
@@ -19,7 +21,11 @@ mr_ctx_t* Context::get() const { return ctx_.get(); }
 void Context::Deleter::operator()(mr_ctx_t* p) const { mr_cleanup(p); }
 
 // KeyPair
-KeyPair::KeyPair(mr_key_pair_t* key) : key_(key) {}
+KeyPair::KeyPair(mr_key_pair_t* key) : key_(key) {
+    if(!key) {
+        throw std::invalid_argument("KeyPair: null pointer");
+    }
+}
 
 KeyPair KeyPair::generate(Context& ctx, bool quantum) {
     mr_key_pair_t* raw = quantum ? mr_generate_quantum_key_pair(ctx.get())
@@ -35,13 +41,17 @@ const uint8_t* KeyPair::public_key() const {
 }
 
 bool KeyPair::is_quantum_resistant() const {
-    return mr_key_pair_is_quantum_resistant(key_.get() != 0);
+    return mr_key_pair_is_quantum_resistant(key_.get()) != 0;
 }
 
 void KeyPair::Deleter::operator()(mr_key_pair_t* p) const { mr_free_key_pair(p); }
 
 // Session
-Session::Session(mr_session_t* sess) : sess_(sess) {}
+Session::Session(mr_session_t* sess) : sess_(sess) {
+    if(!sess) {
+        throw std::invalid_argument("Session: null pinter!");
+    }
+}
 
 Session Session::create(Context& ctx, const KeyPair& local_key,
                        const std::vector<uint8_t>& remote_pubkey,
@@ -101,6 +111,38 @@ std::vector<uint8_t> Session::decrypt(const std::vector<uint8_t>& ciphertext, mr
     plaintext.resize(actual_len);
     return plaintext;
 }
+
+
+// TODO: реализовать функцию
+std::vector<uint8_t> Session::serialize() const {
+    size_t needed = 0;
+    int res = mr_session_to_bytes(sess_.get(), nullptr, 0, &needed);
+    if(res != MR_ERROR_BUFFER_TOO_SMALL) {
+        throw MeshRatchetError(MR_ERROR_SESSION); // todo: переделать MR_ERROR_INTERNAL
+    }
+
+    std::vector<uint8_t> buffer(needed);
+    size_t written = 0;
+    res = mr_session_to_bytes(sess_.get(), buffer.data(), buffer.size(), &written);
+    if(res != MR_SUCCESS) {
+        throw MeshRatchetError(static_cast<mr_result_t>(res));
+    }
+
+    if(written != needed) {
+        throw std::runtime_error("Inconsisten serialization size");
+    }
+
+    return buffer;
+
+}
+
+// std::string Session::get_fingerprint_words() const {
+//     char buf[128];
+//     if(mr_get_fingerprint_words(sess_.get(), buf, sizeof(buf)) != MR_SUCCESS) {
+//         throw MeshRatchetError(MR_ERROR_INVALID_STATE);
+//     }
+//     return std::string(buf);
+// }
 
 void Session::Deleter::operator()(mr_session_t* p) const { mr_session_free(p); }
 

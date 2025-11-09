@@ -1,13 +1,8 @@
 /**
- * @file meshratchet.c
- * @author Mesh Security Labs
- * @brief 
- * @version v0.4
- * @date 2025-10-12
- * @copyright Copyright (c) 2025
- * 
+ * @author NorthernHush
+ * @version v0.1
+ * @brief Mesh Ratcher protocol on base Double Ratchet and Signal protocol, very easy for use project.
  */
-
 #include "../include/meshratchet_internal.h"
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -20,6 +15,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
+#include <sys/types.h>
 #include <time.h>
 #include <sys/time.h>
 #include "../crypto/crypto.h"
@@ -1116,6 +1112,7 @@ int mr_send_heartbeat(mr_session_t* session) {
     return MR_SUCCESS;
 }
 
+
 // Список из 256 слов для человеко-читаемых отпечатков (Fingerprint Words)
 static const char* FINGERPRINT_WORDS[256] = {
     "able", "acid", "aged", "also", "area", "army", "away", "baby", "back", "ball",
@@ -1200,3 +1197,279 @@ static const char* FINGERPRINT_WORDS[256] = {
     "work", "world", "worry", "worth", "would", "write", "wrong", "yard", "year", "yellow",
     "yes", "yet", "you", "young", "your", "zero", "zone", "zoom", "zulu"
 };
+
+int mr_get_fingerprint_words(const mr_session_t* session, char* buffer, size_t buffer_len) {
+    if (!session || !buffer || buffer_len < 64 || !session->is_valid) {
+        return MR_ERROR_INVALID_PARAM;
+    }
+
+    uint8_t f0 = session->fingerprint[0];
+    uint8_t f1 = session->fingerprint[1];
+    uint8_t f2 = session->fingerprint[2];
+    uint8_t f3 = session->fingerprint[3];
+
+    int written = snprintf(buffer, buffer_len, "%s %s %s %s",
+        FINGERPRINT_WORDS[f0],
+        FINGERPRINT_WORDS[f1],
+        FINGERPRINT_WORDS[f2],
+        FINGERPRINT_WORDS[f3]
+    );
+
+    return (written > 0 && written < (int)buffer_len) ? MR_SUCCESS : MR_ERROR_BUFFER_TOO_SMALL;
+}
+
+int mr_session_serialize(const mr_session_t* session, uint8_t* out, size_t out_len, size_t* written) {
+    if (!session || !out || !written || !session->is_valid) {
+        return MR_ERROR_INVALID_PARAM;
+    }
+
+    size_t needed = offsetof(mr_session_t, ctx) + MR_SESSION_ID_LEN + MR_FINGERPRINT_LEN + /*...*/;
+
+    if (out_len < sizeof(session->serialized_data)) {
+        *written = sizeof(session->serialized_data);
+        return MR_ERROR_BUFFER_TOO_SMALL;
+    }
+
+    memcpy(out, session->serialized_data, sizeof(session->serialized_data));
+    *written = sizeof(session->serialized_data);
+    return MR_SUCCESS;
+}
+
+int mr_session_from_bytes(mr_ctx_t* ctx, const uint8_t* data, size_t data_len, mr_session_t** session) {
+    if (!ctx || !data || !session || data_len == 0) {
+        return MR_ERROR_INVALID_PARAM;
+    }
+
+    // Определяем ту же структуру, что и в mr_session_to_bytes
+    struct {
+        uint8_t root_key[MR_ROOT_KEY_LEN];
+        uint8_t send_chain_key[MR_CHAIN_KEY_LEN];
+        uint8_t recv_chain_key[MR_CHAIN_KEY_LEN];
+        uint64_t send_seq, recv_seq;
+        uint8_t session_id[MR_SESSION_ID_LEN];
+        uint8_t fingerprint[MR_FINGERPRINT_LEN];
+        uint32_t quantum_key_index;
+        uint8_t is_quantum;
+        mr_mode_t mode;
+    } temp;
+
+    if (data_len != sizeof(temp)) {
+        return MR_ERROR_INVALID_PARAM;
+    }
+
+    memcpy(&temp, data, sizeof(temp));
+
+    mr_session_t* sess = calloc(1, sizeof(mr_session_t));
+    if (!sess) return MR_ERROR_MEMORY;
+
+    // Копируем данные
+    memcpy(sess->root_key, temp.root_key, MR_ROOT_KEY_LEN);
+    memcpy(sess->send_chain_key, temp.send_chain_key, MR_CHAIN_KEY_LEN);
+    memcpy(sess->recv_chain_key, temp.recv_chain_key, MR_CHAIN_KEY_LEN);
+    sess->send_sequence = temp.send_seq;
+    sess->recv_sequence = temp.recv_seq;
+    memcpy(sess->session_id, temp.session_id, MR_SESSION_ID_LEN);
+    memcpy(sess->fingerprint, temp.fingerprint, MR_FINGERPRINT_LEN);
+    sess->quantum_key_index = temp.quantum_key_index;
+    sess->is_quantum_resistant = temp.is_quantum;
+    sess->current_mode = temp.mode;
+
+    // Восстанавливаем контекст
+    sess->ctx = ctx;
+    ctx->ref_count++;
+
+    // Инициализируем недостающие поля
+    sess->created_time = time(NULL);
+    sess->last_activity = sess->created_time;
+    sess->is_valid = 1;
+
+    // Инициализируем replay cache (минимально)
+    sess->replay_cache = calloc(1, sizeof(mr_replay_cache_t));
+    if (sess->replay_cache) {
+        mr_replay_cache_init(sess->replay_cache, 100, 300);
+    }
+
+    *session = sess;
+    return MR_SUCCESS;
+}
+
+static int mr_group_derive_key(mr_group_session_t* group) {
+    if(!group || !group->admin_key) return MR_ERROR_INVALID_PARAM;
+
+    // Собираем все публичные ключи участников
+    uint8_t* all_keys = malloc(32 * group->member_count);
+    if(!all_keys) return MR_ERROR_MEMORY;
+
+    // Сортируем для детерминизма.
+    mr_group_member_t* m = group->members;
+    for(size_t i = 0; i < group->member_count, 32, memcmp);
+
+    uint8_t salt[SHA224_DIGEST_LENGTH];
+    EVP_MD_CTX* md = EVP_MD_CTX_new();
+    EVP_MD_CTX* md = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(md, EVP_sha256(), NULL);
+    EVP_DigestUpdate(md, all_keys, 32 * group->member_count);
+    EVP_DigestUpdate(md, &group->epoch, sizeof(group->epoch));
+    EVP_DigestFinal_ex(md, salt, NULL);
+    EVP_MD_CTX_free(md);
+
+    // Выводим ключ через HKDF
+    int res = hkdf_derive(salt, sizeof(salt),
+                          group->admin_key->private_key, 32,
+                          (const uint8_t*)"MeshGroupKey", 12,
+                          group->group_key, MR_CHAIN_KEY_LEN);
+    free(all_keys);
+    return res;
+}
+
+// ====== ГРУППОВЫЕ СЕССИИ ======
+
+mr_group_session_t* mr_group_create(mr_ctx_t* ctx, const mr_key_pair_t* admin_key) {
+    if (!ctx || !admin_key) return NULL;
+
+    mr_group_session_t* group = calloc(1, sizeof(mr_group_session_t));
+    if (!group) return NULL;
+
+    group->ctx = ctx;
+    ctx->ref_count++;
+    group->admin_key = (mr_key_pair_t*)admin_key; // предполагаем, что ключ жив
+    group->created_time = time(NULL);
+    group->last_key_update = group->created_time;
+    group->epoch = 0;
+
+    if (generate_random(ctx, group->group_id, MR_SESSION_ID_LEN) != MR_SUCCESS) {
+        free(group);
+        return NULL;
+    }
+
+    // Изначально группа пуста — можно добавить админа как первого участника
+    mr_group_add_member(group, admin_key->public_key, 32);
+
+    if (mr_group_derive_key(group) != MR_SUCCESS) {
+        mr_group_free(group);
+        return NULL;
+    }
+
+    group->is_valid = 1;
+    log_message(ctx, MR_LOG_INFO, "Group created (ID: %02x%02x...)", group->group_id[0], group->group_id[1]);
+    return group;
+}
+
+int mr_group_add_member(mr_group_session_t* group, const uint8_t* member_pubkey, size_t pubkey_len) {
+    if (!group || !member_pubkey || pubkey_len != 32) return MR_ERROR_INVALID_PARAM;
+
+    // Проверяем, нет ли уже такого участника
+    mr_group_member_t* m = group->members;
+    while (m) {
+        if (memcmp(m->public_key, member_pubkey, 32) == 0) {
+            return MR_SUCCESS; // уже есть
+        }
+        m = m->next;
+    }
+
+    mr_group_member_t* new_member = calloc(1, sizeof(mr_group_member_t));
+    if (!new_member) return MR_ERROR_MEMORY;
+    memcpy(new_member->public_key, member_pubkey, 32);
+    new_member->next = group->members;
+    group->members = new_member;
+    group->member_count++;
+
+    group->epoch++;
+    return mr_group_derive_key(group);
+}
+
+int mr_group_remove_member(mr_group_session_t* group, const uint8_t* member_pubkey, size_t pubkey_len) {
+    if (!group || !member_pubkey || pubkey_len != 32) return MR_ERROR_INVALID_PARAM;
+
+    mr_group_member_t** prev = &group->members;
+    while (*prev) {
+        if (memcmp((*prev)->public_key, member_pubkey, 32) == 0) {
+            mr_group_member_t* to_free = *prev;
+            *prev = to_free->next;
+            free(to_free);
+            group->member_count--;
+            group->epoch++;
+            return mr_group_derive_key(group);
+        }
+        prev = &(*prev)->next;
+    }
+    return MR_SUCCESS; // не найден — не ошибка
+}
+
+int mr_group_encrypt(mr_group_session_t* group, const uint8_t* plaintext, size_t pt_len,
+                     uint8_t* ciphertext, size_t ct_buffer_len, size_t* ct_len) {
+    if (!group || !plaintext || !ciphertext || !ct_len || pt_len == 0)
+        return MR_ERROR_INVALID_PARAM;
+
+    const size_t header_len = MR_SESSION_ID_LEN + 4 + MR_NONCE_LEN; // group_id + epoch + nonce
+    const size_t min_len = header_len + pt_len + MR_TAG_LEN;
+    if (ct_buffer_len < min_len) return MR_ERROR_BUFFER_TOO_SMALL;
+
+    uint8_t nonce[MR_NONCE_LEN];
+    if (generate_random(group->ctx, nonce, MR_NONCE_LEN) != MR_SUCCESS)
+        return MR_ERROR_CRYPTO;
+
+    size_t offset = 0;
+    memcpy(ciphertext + offset, group->group_id, MR_SESSION_ID_LEN); offset += MR_SESSION_ID_LEN;
+    memcpy(ciphertext + offset, &group->epoch, 4); offset += 4;
+    memcpy(ciphertext + offset, nonce, MR_NONCE_LEN); offset += MR_NONCE_LEN;
+
+    size_t encrypted_len;
+    int res = perform_encryption(group->ctx, plaintext, pt_len,
+                                 group->group_key, nonce,
+                                 ciphertext + offset, &encrypted_len,
+                                 group->ctx->cipher_algorithm);
+    if (res != MR_SUCCESS) return res;
+
+    *ct_len = offset + encrypted_len;
+    return MR_SUCCESS;
+}
+
+int mr_group_decrypt(mr_group_session_t* group, const uint8_t* ciphertext, size_t ct_len,
+                     uint8_t* plaintext, size_t pt_buffer_len, size_t* pt_len) {
+    if (!group || !ciphertext || !plaintext || !pt_len)
+        return MR_ERROR_INVALID_PARAM;
+
+    const size_t header_len = MR_SESSION_ID_LEN + 4 + MR_NONCE_LEN;
+    if (ct_len < header_len + MR_TAG_LEN) return MR_ERROR_INVALID_PARAM;
+
+    uint8_t recv_group_id[MR_SESSION_ID_LEN];
+    uint32_t recv_epoch;
+    uint8_t nonce[MR_NONCE_LEN];
+
+    size_t offset = 0;
+    memcpy(recv_group_id, ciphertext + offset, MR_SESSION_ID_LEN); offset += MR_SESSION_ID_LEN;
+    memcpy(&recv_epoch, ciphertext + offset, 4); offset += 4;
+    memcpy(nonce, ciphertext + offset, MR_NONCE_LEN); offset += MR_NONCE_LEN;
+
+    // Проверка ID группы
+    if (memcmp(recv_group_id, group->group_id, MR_SESSION_ID_LEN) != 0)
+        return MR_ERROR_VERIFICATION;
+
+    // (Опционально) можно проверить epoch — но для простоты пропустим
+
+    size_t data_len = ct_len - offset;
+    return perform_decryption(group->ctx, ciphertext + offset, data_len,
+                              group->group_key, nonce,
+                              plaintext, pt_len,
+                              group->ctx->cipher_algorithm);
+}
+
+void mr_group_free(mr_group_session_t* group) {
+    if (!group) return;
+
+    // Очистка участников
+    mr_group_member_t* m = group->members;
+    while (m) {
+        mr_group_member_t* next = m->next;
+        free(m);
+        m = next;
+    }
+
+    secure_zero(group->group_key, sizeof(group->group_key));
+    if (group->ctx) {
+        mr_cleanup(group->ctx);
+    }
+    secure_zero(group, sizeof(mr_group_session_t));
+    free(group);
+}

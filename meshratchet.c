@@ -504,8 +504,6 @@ const char* mr_error_string(mr_result_t error) {
     }
 }
 
-// Остальные функции реализуются аналогично...
-
 int mr_get_version(char* buffer, size_t buffer_len) {
     if (!buffer || buffer_len < strlen(MESHRATCHET_VERSION) + 1) {
         return MR_ERROR_BUFFER_TOO_SMALL;

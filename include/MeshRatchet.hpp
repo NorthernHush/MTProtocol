@@ -2,6 +2,7 @@
 #pragma once
 
 #include <memory>
+#include <sys/types.h>
 #include <vector>
 #include <stdexcept>
 #include <cstdint>
@@ -80,6 +81,9 @@ public:
     std::vector<uint8_t> encrypt(mr_msg_type_t msg_type, const std::vector<uint8_t>& plaintext);
     std::vector<uint8_t> decrypt(const std::vector<uint8_t>& ciphertext, mr_msg_type_t& out_msg_type);
 
+    std::vector<uint8_t> serialize() const;
+    static Session deserialize(Context& ctx, const std::vector<uint8_t>& data);
+
 private:
     explicit Session(mr_session_t* sess);
     struct Deleter {
@@ -87,5 +91,6 @@ private:
     };
     std::unique_ptr<mr_session_t, Deleter> sess_;
 };
+
 
 } // namespace meshratchet

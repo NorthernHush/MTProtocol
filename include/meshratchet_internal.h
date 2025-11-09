@@ -3,6 +3,7 @@
 #define MESHRATCHET_INTERNAL_H
 
 #include "meshratchet.h"
+#include <cstdint>
 #include <time.h>
 #include <sys/time.h>
 #include "../crypto/crypto.h"
@@ -111,6 +112,28 @@ struct mr_pending_msg {
     mr_msg_type_t msg_type;
     int is_encrypted;
     struct mr_pending_msg* next;
+};
+
+typedef struct mr_group_member {
+    uint8_t public_key[32];
+    uint8_t id;
+    struct mr_group_member* next;
+} mr_group_member_t;
+
+struct mr_group_session {
+    mr_ctx_t* ctx;
+    uint8_t group_id[MR_SESSION_ID_LEN];
+    uint8_t group_key[MR_CHAIN_KEY_LEN];
+    uint8_t epoch;
+    time_t created_time;
+    time_t last_key_update;
+
+    mr_key_pair_t* admin_key;
+    mr_group_member_t* members;
+    size_t member_count;
+
+    int is_valid;
+    mr_crypto_ctx_t crypto_ctx;
 };
 
 #endif // MESHRATCHET_INTERNAL_H
