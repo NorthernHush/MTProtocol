@@ -13,11 +13,11 @@ python_include = sysconfig.get_path("include")
 ext_modules = [
     Pybind11Extension(
         "meshratchet",
-        ["python/meshratchet_pybind.cpp"],
+        ["meshratchet_pybind.cpp"],
         include_dirs=[
             os.path.join(ROOT, "include"),
-            python_include,           # ← явно добавляем
-            pybind11.get_include(),   # ← заголовки pybind11
+            python_include,           
+            pybind11.get_include(),   
         ],
         library_dirs=[ROOT],
         libraries=["meshratchet", "ssl", "crypto"],
