@@ -1,20 +1,45 @@
-Copyright (c) 2025 MTProtocol
+MTProtocol License v1.0
+Copyright (c) 2025 MTProtocol. All rights reserved.
 
-All rights reserved.
+1. Grant of Limited License
+Permission is hereby granted to use the MTProtocol software (the “Software”)
+solely as a dependency or library within other software applications or systems,
+provided that such use complies with all of the following conditions:
+  a) The Software must be used in its original, unmodified form.
+  b) The Software may only be used as a library component; it may not be
+     altered, recompiled, or incorporated into derivative works.
+  c) The Software may not be redistributed, sublicensed, or published in whole
+     or in part, whether in source or binary form, without prior written
+     permission from the copyright holder.
 
-Permission is hereby granted to use this software as a binary or source
-library solely for the purpose of integrating it into applications or systems,
-provided that:
+2. Prohibited Uses
+Without express written permission from the copyright holder, you may not:
+  a) modify, adapt, translate, reverse-engineer, decompile, disassemble,
+     or create derivative works of the Software;
+  b) distribute, publish, or make the Software available to third parties;
+  c) use the Software for the purpose of developing competing technologies
+     or cryptographic systems derived from MTProtocol.
 
-1. The software is used without modification.
-2. Redistribution of the software, in whole or in part, with or without
-   modification, is prohibited.
-3. Reverse engineering, decompiling, or disassembling the software is prohibited.
-4. The software may not be published, sublicensed, sold, or otherwise
-   distributed to any third party.
-5. Any use of this software must include proper attribution to the author.
+3. Ownership
+The Software is the intellectual property of the copyright holder and is
+protected under applicable copyright and international treaties. This license
+does not transfer ownership of the Software or any associated rights.
 
-This license does not grant any rights to modify, reproduce, or distribute
-the source code or binary beyond what is explicitly permitted above.
+4. Warranty Disclaimer
+The Software is provided “as is” without warranty of any kind, express or
+implied, including but not limited to warranties of merchantability or fitness
+for a particular purpose. The copyright holder shall not be liable for any
+damages arising from use of the Software.
 
-For commercial use or distribution, a separate license agreement is required.
+5. Termination
+Any violation of this license automatically terminates the rights granted
+herein. Upon termination, you must cease all use of the Software and destroy
+all copies in your possession.
+
+6. Governing Law
+This license shall be governed by and construed in accordance with the laws of
+Russia, without regard to its conflict of laws
+principles.
+
+For commercial licensing, redistribution, or partnership inquiries, please
+contact: meshoff@proton.me.
