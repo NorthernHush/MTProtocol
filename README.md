@@ -1,225 +1,166 @@
 <h1 align="center">
-  🔒 <b>MESH SECURITY LABS</b> 🔒
+🔒 <b>MTProtocol</b> 🔒
 </h1>
 
 <h3 align="center">
-  <i>Анонимность. Безопасность. Контроль.</i>
+<i>Anonymity. Security. Control</i>
 </h3>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Status-Open_Source-blue?style=for-the-badge&logo=github"/>
-  <img src="https://img.shields.io/badge/Encryption-E2EE-green?style=for-the-badge&logo=lock"/>
-  <img src="https://img.shields.io/badge/Protocol-Double_Ratchet-purple?style=for-the-badge&logo=cryptography"/>
+<p align="center"> 
+<img src="https://img.shields.io/badge/Status-Open_Source-blue?style=for-the-badge&logo=github"/> 
+<img src="https://img.shields.io/badge/Encryption-E2EE-green?style=for-the-badge&logo=lock"/> 
+<img src="https://img.shields.io/badge/Protocol-Double_Ratchet-purple?style=for-the-badge&logo=cryptography"/>
 </p>
 
-# 🧩 MeshRatchet Protocol — Криптографическое ядро анонимного P2P-мессенджера
+# 🧩 MTProtocol - Cryptographic core of an anonymous P2P messenger
 
-<p align="center">
-  🔒───🔐───🛡️───🕵️‍♂️───🧩<br>
-  │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│<br>
-  🧩───🕵️‍♂️───🛡️───🔐───🔒<br>
-  │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│<br>
-  🔐───🛡️───🕵️‍♂️───🧩───🔒
+<p align="center"> 
+🔒───🔐───🛡️───🕵️‍♂️───🧩<br> 
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│& nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│<br> 
+🧩───🕵️‍♂️───🛡️───🔐───🔒<br> 
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│& nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│<br>
+🔐───🛡️───🕵️‍♂️───🧩───🔒
 </p>
 
-> ✅ **Этот репозиторий является публичным и предназначен для всех разработчиков, исследователей и энтузиастов, заинтересованных в приватных и безопасных коммуникациях.**
+> ✅ **This repository is public and intended for all developers, researchers, and enthusiasts interested in private and secure communications.**
 
-**MeshRatchet Protocol** — это открытая, высоконадёжная реализация протокола двойного рэтчета (Double Ratchet) на языке **C**, разработанная как криптографический фундамент для анонимного P2P-мессенджера **Mesh**.  
+**MTProtocol** is an open, highly secure implementation of the Double Ratchet protocol in C, designed as the cryptographic foundation for the anonymous P2P messenger **Mesh**.
 
-Проект ориентирован на:
-- **Полный контроль над данными**: все операции шифрования и управления ключами происходят локально.
-- **Максимальную устойчивость к компрометации**: forward secrecy и post-compromise security по умолчанию.
-- **Прозрачность и аудируемость**: открытый исходный код позволяет независимо проверить безопасность.
+The project focuses on:
+- **Full control over data**: all encryption and key management operations occur locally.
+- **Maximum resilience to compromise**: forward secrecy and post-compromise security by default.
+- **Transparency and auditability**: open source code allows for independent security verification.
 
-Технологический стек:
-- **C99** — для криптографического ядра и работы с памятью  
-- **OpenSSL 3.0+** — для X25519, HKDF, ChaCha20-Poly1305  
-- **Python 3.6+** — для вспомогательных инструментов: сборки (`meshprotocol.py`), тестирования и отладки  
+Technology stack:
+- **C99** — for the cryptographic core and memory management
+- **OpenSSL 3.0+** — for X25519, HKDF, ChaCha20-Poly1305
+- **Python 3.6+** — for auxiliary tools: build (`meshprotocol.py`), testing, and debugging
 
-Этот протокол — не просто библиотека. Это **гарантия приватности**, построенная на принципах открытости и доверия через проверяемость.
+This protocol is not just a library. It is a **privacy guarantee** built on the principles of openness and trust through verifiability.
 
-**MeshRatchet** — это легковесная библиотека на C, реализующая безопасный криптографический протокол обмена сообщениями с двойным рэтчетом (Double Ratchet), обеспечивающий **forward secrecy** и **post-compromise security**. Библиотека разработана для использования в мессенджерах, IoT-устройствах и других приложениях, где важны конфиденциальность и целостность переписки.
+MeshRatchet is a lightweight C library implementing a secure cryptographic messaging protocol with double ratcheting (forward secrecy) and post-compromise security. The library is designed for use in instant messaging apps, IoT devices, and other applications where confidentiality and integrity of communications are important.
 
-> **Версия**: `v0.1`  
-> **Автор**: Mesh Security Labs  
-> **Telegram**: [@mesh_im](https://t.me/mesh_im)
-
----
-
-## 🔒 Основные возможности
-
-- **Двойной рэтчет (Double Ratchet)**: автоматическое обновление ключей при каждом сообщении.
-- **Forward Secrecy**: компрометация долгосрочного ключа не раскрывает прошлые сообщения.
-- **Post-Compromise Security**: даже при утечке текущих ключей сессия восстанавливает безопасность со временем.
-- **Проверка целостности и подлинности**: шифрование с аутентификацией (AEAD) через **ChaCha20-Poly1305**.
-- **Гибкая конфигурация**: настройка размера сообщений, интервалов обновления ключей, логирования и генерации случайных чисел.
-- **Безопасная очистка памяти**: чувствительные данные (ключи, секреты) обнуляются после использования.
-- **Поддержка сериализации и пакетных операций** (опционально).
+> Version: v0.1
+> Author: NorthernHush
 
 ---
 
-## 🧰 Требования
+## 🔒 Key Features
 
-- **OpenSSL 3.0+** (для X25519, HKDF, ChaCha20-Poly1305)
+- Double Ratchet: Automatic key updates with each message.
+- Forward Secrecy: Compromising a long-term key does not reveal past messages.
+- Post-Compromise Security: Even if current keys are leaked, the session regains security over time. - **Integrity and Authentication**: Authenticated encryption (AEAD) via **ChaCha20-Poly1305**.
+- **Flexible Configuration**: Configure message size, key refresh intervals, logging, and random number generation.
+- **Secure Memory Wipe**: Sensitive data (keys, secrets) are cleared after use.
+- **Serialization and Batch Operations** (optional).
+
+---
+
+## 🧰 Requirements
+
+- **OpenSSL 3.0+** (for X25519, HKDF, ChaCha20-Poly1305)
 - Python 3.6+
-- Компилятор C99 или новее
-- POSIX-совместимая система (для `time()`)
+- C99 compiler or later
+- POSIX-compliant system (for `time()`)
 
 ---
 
-## 📦 Установка и сборка
+## 📦 Installation and Building
 
-MeshRatchet поставляется с удобным Python-скриптом `meshprotocol.py`, который автоматизирует сборку библиотеки и примеров.
+MeshRatchet comes with a convenient Python script, `meshprotocol.py`, which automates building the library and examples.
 
-### Требования
+### Requirements
 - Python 3.6+
-- OpenSSL 3.0+ (с заголовочными файлами)
-- Компилятор C (gcc/clang)
+- OpenSSL 3.0+ (with header files)
+- C compiler (gcc/clang)
 
-### Быстрая сборка
+### Quick build
 ```bash
-# Сборка основной библиотеки
+# Building the main library
 python3 meshprotocol.py build
 
-# Сборка с примерами
+# Building with examples
 python3 meshprotocol.py build --with-examples
 
-# Установка в систему (опционально)
+# Installing on the system (optional)
 sudo python3 meshprotocol.py install
- 
-# Проверка зависимостей
+
+# Checking dependencies
 python3 meshprotocol.py check
 
-# Запуск тестов (если есть)
+# Running tests (if any)
 python3 meshprotocol.py test
 
-# Генерация документации
+# Generating documentation
 python3 meshprotocol.py docs
 
-# Очистка сборочных артефактов
+# Cleaning up build artifacts
 python3 meshprotocol.py clean
 ```
-> 💡 Скрипт автоматически обнаружит OpenSSL и настроит флаги компиляции. При необходимости можно указать путь вручную:  
+> 💡 The script will automatically detect OpenSSL and set the compilation flags. If necessary, you can specify the path manually:
 > `python3 meshprotocol.py build --openssl-path /usr/local/ssl`
+## 🔐 Cryptographic Primitives
 
-### 🚀 Быстрый старт
-```C
-#include "meshratchet.h"
+MeshRatchet is built on proven and modern cryptographic algorithms:
 
-int main() {
-    // Инициализация контекста
-    mr_ctx_t* ctx = mr_init();
-    if (!ctx) return -1;
+| Component | Algorithm | Purpose |
+|---------------------|-----------------------------------------------|
+| **Key Exchange** | `X25519` (Elliptic Curve DH) | Secure Shared Secret Negotiation |
+| **Derivative Function** | `HKDF-SHA256` | Generate Cryptographic Keys from Secrets |
+| **Encryption** | `ChaCha20-Poly1305` (AEAD) | Authenticated Message Encryption |
+| **Ratchet Function** | `HMAC-SHA256` | One-Way Keychain Update |
 
-    // Генерация ключей
-    mr_key_pair_t* alice_keys = mr_generate_key_pair(ctx);
-    mr_key_pair_t* bob_keys = mr_generate_key_pair(ctx);
-
-    // Создание сессий
-    mr_session_t* alice_session, *bob_session;
-    mr_session_create(ctx, alice_keys, bob_keys->public_key, 32, &alice_session);
-    mr_session_create(ctx, bob_keys, alice_keys->public_key, 32, &bob_session);
-
-    // Шифрование
-    uint8_t plaintext[] = "Hello, Bob!";
-    uint8_t ciphertext[1024];
-    size_t ct_len;
-    mr_encrypt(alice_session, MR_MSG_TEXT, plaintext, strlen((char*)plaintext),
-               ciphertext, sizeof(ciphertext), &ct_len);
-
-    // Расшифровка
-    uint8_t decrypted[1024];
-    size_t pt_len;
-    mr_msg_type_t msg_type;
-    mr_decrypt(bob_session, ciphertext, ct_len, decrypted, sizeof(decrypted), &pt_len, &msg_type);
-
-    // Очистка
-    mr_session_free(alice_session);
-    mr_session_free(bob_session);
-    mr_free_key_pair(alice_keys);
-    mr_free_key_pair(bob_keys);
-    mr_cleanup(ctx);
-
-    return 0;
-}
-```
-### ⚙️ Конфигурация
-```C
-mr_config_t config;
-mr_get_default_config(&config);
-config.max_message_size = 4096;        // Макс. размер сообщения (байт)
-config.key_update_interval = 100;      // Обновлять ключи каждые 100 сообщений
-config.max_skip_keys = 1000;           // Макс. пропуск сообщений при расшифровке
-config.enable_serialization = 0;       // Отключить сериализацию (если не нужна)
-
-mr_ctx_t* ctx = mr_init_ex(&config);
-```
-## 🔐 Криптографические примитивы
-
-MeshRatchet построен на проверенных и современных криптографических алгоритмах:
-
-| Компонент           | Алгоритм                     | Назначение                                  |
-|---------------------|------------------------------|---------------------------------------------|
-| **Обмен ключами**   | `X25519` (Elliptic Curve DH) | Безопасное согласование общего секрета       |
-| **Производная функция** | `HKDF-SHA256`            | Генерация криптографических ключей из секретов |
-| **Шифрование**      | `ChaCha20-Poly1305` (AEAD)   | Аутентифицированное шифрование сообщений    |
-| **Рэтчет-функция**  | `HMAC-SHA256`                | Одностороннее обновление цепочек ключей     |
-
-Все примитивы соответствуют рекомендациям IETF и Signal Protocol.
+All primitives comply with IETF and Signal Protocol recommendations.
 
 ---
 
-## 📚 Публичный API
+## 📚 Public API
 
-Библиотека предоставляет простой и безопасный C API:
+The library provides a simple and secure C API:
 
-- **`mr_init()` / `mr_init_ex()`**  
-  Инициализация контекста с настройками по умолчанию или пользовательскими параметрами.
+- **`mr_init()` / `mr_init_ex()`**
+Initialize a context with default settings or user-defined parameters.
 
-- **`mr_generate_key_pair()`**  
-  Генерация новой X25519 ключевой пары (публичный + приватный ключ).
+- **`mr_generate_key_pair()`**
+Generate a new X25519 key pair (public + private key).
 
-- **`mr_session_create()`**  
-  Установка защищённой сессии с удалённой стороной на основе обмена публичными ключами.
+- **`mr_session_create()`**
+Establish a secure session with the remote party based on public key exchange.
 
-- **`mr_encrypt()` / `mr_decrypt()`**  
-  Шифрование и расшифровка сообщений с автоматическим управлением ключами и защитой от повторов.
+- **`mr_encrypt()` / `mr_decrypt()`**
+Encrypt and decrypt messages with automatic key management and replay protection.
 
-- **`mr_key_update()`**  
-  Плановое обновление ключей (например, раз в N сообщений).
+- **`mr_key_update()`**
+Scheduled key updates (e.g., once every N messages).
 
-- **`mr_emergency_key_update()`**  
-  Аварийный сброс всех ключей при подозрении на компрометацию.
+- **`mr_emergency_key_update()`**
+Emergency reset of all keys if a compromise is suspected.
 
-- **`mr_get_session_info()`**  
-  Получение метаданных сессии: счётчики, ID, статус активности.
+- **`mr_get_session_info()`**
+Retrieving session metadata: counters, ID, activity status.
 
-- **`mr_error_string()`**  
-  Преобразование кодов ошибок в человекочитаемые строки для логирования и отладки.
+- **`mr_error_string()`**
+Converting error codes to human-readable strings for logging and debugging.
 
-> 📌 Полное описание типов, структур и возвращаемых значений — в заголовочном файле [`meshratchet.h`](meshratchet.h).
-
----
-
-## 📄 Лицензия
-
-MeshRatchet распространяется под проприетарной лицензией **Mesh Security Labs License**.
-
-- ✅ Бесплатно для исследований, обучения и некоммерческого использования.  
-- 💼 Для коммерческого внедрения требуется письменное разрешение.
-
-📩 **Свяжитесь с нами**: [@mesh_im](https://t.me/mesh_im)
+> 📌 A full description of types, structures, and return values ​​is in the [`meshratchet.h`](meshratchet.h) header file.
 
 ---
 
-## 🤝 Поддержка и обратная связь
+## 📄 License
 
-Мы открыты к сотрудничеству и готовы помочь:
+MTProtocol is distributed under the proprietary **MIT LICENSE**.
 
-- **Telegram**: [@mesh_im](https://t.me/mesh_im)  
-- **Email**: `@mesh_im` *(только через официальные каналы)*  
-- **Отчёты об уязвимостях**: присылайте в Telegram с пометкой **[SECURITY]**
+- ✅ Free for research, education, and non-commercial use.
+- 💼 Written permission required for commercial implementation.
 
-> ⚠️ **Важно**:  
-> MeshRatchet **v0.1** — это **альфа-версия**, находящаяся в активной разработке.  
-> **Не рекомендуется** для использования в production-средах без независимого криптографического аудита.
+---
+
+## 🤝 Support and Feedback
+
+We are open to collaboration and ready to help:
+
+- **Vulnerability reports**: send them to Telegram with the subject **[SECURITY]**
+
+> ⚠️ **Important**:
+> **MTProtocol** **v0.1** is an **alpha version**, under active development.
+> **Not recommended** for use in production environments without independent cryptographic auditing.
